@@ -54,7 +54,7 @@ class NeutriParticle
 
   def impact(z)
     if (@mass.abs < BigDecimal("1e-10")) && (@splitting_potential_power.abs < BigDecimal("1e-10")) || ((@mass == 0) && (@splitting_potential_power == 0)) || z <= 0
-      "(0)"
+      0 # changed from "(0)"
     else
       (@mass / (z + @splitting_potential_power)) * z
     end
@@ -485,10 +485,10 @@ puts "Momentum: #{momentum}"
 
 particles = []
 
-999.times do
-  mass = BigDecimal(rand(1..99999999999999999999999999))
-  splitting_potential_power = BigDecimal(rand(1..9999999999999999999999))
-  position = BigDecimal(rand(1..99999999999999999999999999))
+20000.times do
+  mass = BigDecimal(rand(1..999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999))
+  splitting_potential_power = BigDecimal(rand(1..999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999))
+  position = BigDecimal(rand(1..99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999))
   particles << NeutriParticle.new(mass, splitting_potential_power, position)
 end
 
