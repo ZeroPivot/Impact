@@ -2,31 +2,90 @@ require_relative "lib/partitioned_array/lib/line_db"
 
 
 require 'bigdecimal'
-
+require 'matrix'
+#require 'matrix/dsl'
 
 
 class Particle
-  attr_accessor :position, :mass, :splitting_potential_power
+  attr_accessor :position, :mass, :splitting_potential_power, :wave_function
 
-  def initialize(position = BigDecimal(0), mass = BigDecimal(1), splitting_potential_power = BigDecimal(0))
+  def initialize(position, mass, splitting_potential_power = 1, wave_function = Quantum::Qubit.new)
     @position = position
     @mass = mass
     @splitting_potential_power = splitting_potential_power
+    if wave_function.is_a?(Matrix)
+      @wave_function = Quantum::Qubit.new(wave_function[0, 0], wave_function[1, 0])
+    elsif wave_function.is_a?(Quantum::Qubit)
+      @wave_function = wave_function
+    else
+      raise ArgumentError, "Invalid wave function type: #{wave_function.class}"
+    end
   end
-
   def kinetic_energy(velocity, mass = @mass)
     BigDecimal("0.5") * mass * velocity ** 2
+  end
+
+  def to_str
+    Matrix.column_vector([@position, @mass, @splitting_potential_power])
+  end
+
+  def tensor_product(other_particle)
+    new_position = @position.to_f * other_particle.position.to_f
+    new_mass = @mass.to_f * other_particle.mass.to_f
+    new_splitting_potential_power = @splitting_potential_power.to_f + other_particle.splitting_potential_power.to_f
+    new_wave_function = @wave_function.tensor_product(other_particle.wave_function)
+    Particle.new(new_position, new_mass, new_splitting_potential_power, new_wave_function[0,0], new_wave_function[1,0])
   end
 end
 
 class NeutriParticle
-  attr_reader :mass, :splitting_potential_power, :position
+  attr_accessor :mass, :splitting_potential_power, :position, :wave_function, :qubit
+
 
   def initialize(mass = BigDecimal(0), splitting_potential_power = BigDecimal(2), position = BigDecimal(0))
     @mass = mass
     @splitting_potential_power = splitting_potential_power
     @position = position
+    @qubit = Quantum::Qubit.new
+    @qubit.alpha = Complex(1, 0)
+    @qubit.beta = Complex(0, 0)
+    @state = @qubit.to_vector
+    @wave_function = @state # initialize wave_function with state
   end
+  
+  
+  def tensor_product(other_particle)
+    new_qubit = @qubit.tensor_product(other_particle.qubit)
+    new_position = @position.kronecker_product(other_particle.position)
+    NeutriParticle.new(@mass * other_particle.mass, @splitting_potential_power + other_particle.splitting_potential_power, new_position).tap do |new_particle|
+      new_particle.qubit = new_qubit
+      new_particle.wave_function = new_qubit.to_vector
+    end
+  end
+  def probability(state)
+    # Calculate the probability of measuring the particle in the given state
+    (state.conjugate * @qubit.to_vector).abs2
+  end
+
+  def superposition(other_particle)
+    # Create a new qubit that represents the superposition of the two particles
+    new_qubit = Quantum::Qubit.new
+    new_qubit.alpha = @qubit.alpha * other_particle.qubit.alpha
+    new_qubit.beta = @qubit.beta * other_particle.qubit.beta
+    
+    new_qubit_other = Quantum::Qubit.new
+    new_qubit_other.alpha = @qubit.alpha * other_particle.qubit.beta
+    new_qubit_other.beta = @qubit.beta * other_particle.qubit.alpha
+    
+    # Update the qubits of the particles
+    @qubit = new_qubit
+    other_particle.qubit = new_qubit_other
+    
+    # Update the wave function of the particles based on the new qubit state
+    @wave_function = new_qubit.to_vector
+    other_particle.wave_function = new_qubit_other.to_vector
+  end
+
 
   def wave_length
     if @mass == 0
@@ -35,6 +94,8 @@ class NeutriParticle
       BigDecimal('6.62607004e-34') / BigDecimal('1.60217662e-19') / BigDecimal(299792458) / BigDecimal(@mass.abs)
     end
   end
+
+  
 
   def momentum
     if @mass == 0
@@ -54,7 +115,7 @@ class NeutriParticle
 
   def impact(z)
     if (@mass.abs < BigDecimal("1e-10")) && (@splitting_potential_power.abs < BigDecimal("1e-10")) || ((@mass == 0) && (@splitting_potential_power == 0)) || z <= 0
-      0 # changed from "(0)"
+      1e-10 # changed from "(0)"
     else
       (@mass / (z + @splitting_potential_power)) * z
     end
@@ -142,6 +203,74 @@ class ProbabilityOfInteraction
     return @interaction.probability_of_interaction
   end
 end
+
+module Quantum
+  class Qubit
+    attr_accessor :alpha, :beta
+
+    def initialize(alpha = Complex(1, 0), beta = Complex(0, 0))
+      @alpha = alpha
+      @beta = beta
+    end
+
+    def measure
+      rand_num = rand()
+      if rand_num <= @alpha.abs2
+        @alpha = Complex(1, 0)
+        @beta = Complex(0, 0)
+        return 0
+      else
+        @alpha = Complex(0, 0)
+        @beta = Complex(1, 0)
+        return 1
+      end
+    end
+    
+    def tensor_product(other_qubit)
+      # compute the tensor product between this qubit and another qubit
+      alpha_beta = [@alpha*@beta, other_qubit.alpha*other_qubit.beta]
+      beta_alpha = [@beta*other_qubit.alpha, @alpha*other_qubit.beta]
+      Quantum::Qubit.new(alpha_beta.sum, beta_alpha.sum)
+    end
+
+    def to_matrix
+      Matrix.column_vector([[@alpha],[@beta]])
+    end
+
+    def to_vector
+      Matrix.column_vector([@alpha, @beta])
+    end
+
+    def to_s
+      "alpha: #{@alpha}, beta: #{@beta}"
+    end
+
+    def hadamard_gate
+      # apply the Hadamard gate to the qubit
+      @alpha, @beta = (1 / Math.sqrt(2)) * (@alpha + @beta), (1 / Math.sqrt(2)) * (@alpha - @beta)
+    end
+
+    def pauli_x_gate
+      # apply the Pauli X gate to the qubit
+      @alpha, @beta = @beta, @alpha
+    end
+
+    def pauli_y_gate
+      # apply the Pauli Y gate to the qubit
+      @alpha, @beta = Complex(-@beta.imag, @alpha.imag), Complex(@beta.real, -@alpha.real)
+    end
+
+    def pauli_z_gate
+      # apply the Pauli Z gate to the qubit
+      @beta = -@beta
+    end
+  end
+end
+
+
+
+
+
 
 # Create two particles
 particle1 = Particle.new(BigDecimal(1), BigDecimal(1))
@@ -483,19 +612,6 @@ puts "Momentum: #{momentum}"
 ####
 
 
-particles = []
-
-20000.times do
-  mass = BigDecimal(rand(1..999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999))
-  splitting_potential_power = BigDecimal(rand(1..999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999))
-  position = BigDecimal(rand(1..99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999))
-  particles << NeutriParticle.new(mass, splitting_potential_power, position)
-end
-
-interaction = NeutriParticleInteraction.new(*particles)
-
-probability = ProbabilityOfInteraction.new(interaction).calculate
-p probability
 
 
 ##########
@@ -535,3 +651,93 @@ impact = neutrino.impact(target.position)
 probability = ProbabilityOfInteraction.new(NeutriParticleInteraction.new(neutrino, target)).calculate
 puts "The impact of the neutrino on the target is #{impact}."
 puts "The probability of the neutrino interacting with the target is #{probability}."
+
+
+# Define the particles
+particle1 = NeutriParticle.new(BigDecimal("0.1"), BigDecimal("1"))
+particle2 = NeutriParticle.new(BigDecimal("0.2"), BigDecimal("2"))
+particle3 = NeutriParticle.new(BigDecimal("0.3"), BigDecimal("3"))
+
+# Create an interaction between the particles
+interaction = NeutriParticleInteraction.new(particle1, particle2, particle3, distance: BigDecimal("2"))
+
+# Calculate the probability of interaction
+prob = ProbabilityOfInteraction.new(interaction).calculate
+puts "Probability of interaction: #{prob}"
+
+# Print the particles' state before superposition
+puts "Particle 1 state before superposition: #{particle1.wave_function}"
+puts "Particle 2 state before superposition: #{particle2.wave_function}"
+puts "Particle 3 state before superposition: #{particle3.wave_function}"
+
+# Create a superposition between the particles
+particle1.superposition(particle2)
+particle1.superposition(particle3)
+
+# Print the particles' state after superposition
+puts "Particle 1 state after superposition: #{particle1.wave_function}"
+puts "Particle 2 state after superposition: #{particle2.wave_function}"
+puts "Particle 3 state after superposition: #{particle3.wave_function}"
+
+puts "####################"
+
+particle1 = NeutriParticle.new(BigDecimal(1), BigDecimal(1))
+particle2 = NeutriParticle.new(BigDecimal(1), BigDecimal(1))
+particle3 = NeutriParticle.new(BigDecimal(1), BigDecimal(1))
+
+puts "Particle 1 state before superposition: #{particle1.wave_function}"
+puts "Particle 2 state before superposition: #{particle2.wave_function}"
+puts "Particle 3 state before superposition: #{particle3.wave_function}"
+
+particle1.superposition(particle2)
+particle2.superposition(particle3)
+
+puts "\nAfter superposition:\n"
+
+puts "Particle 1 state after superposition: #{particle1.wave_function}"
+puts "Particle 2 state after superposition: #{particle2.wave_function}"
+puts "Particle 3 state after superposition: #{particle3.wave_function}"
+
+puts "####################"
+
+qubits = []
+
+# create 64 qubits and put them into superposition
+1024.times do
+  qubit = Quantum::Qubit.new
+  qubit.hadamard_gate
+  qubits << qubit
+end
+
+# print the superposition states of the qubits
+qubits.each_with_index do |qubit, index|
+  puts "Qubit #{index + 1} state: #{qubit.to_vector}"
+end
+puts "####################"
+
+# Create 64 qubits in the |0> state
+qubits = Array.new(5) { Quantum::Qubit.new }
+
+# Apply the Hadamard gate to each qubit
+qubits.each(&:hadamard_gate)
+
+# Compute the tensor product of all qubits to get the 64-qubit superposition state
+superposition = qubits.reduce { |result, qubit| result.tensor_product(qubit) }
+
+puts superposition.alpha
+puts superposition.beta
+
+puts "####################"
+particles = []
+
+20000.times do
+  mass = BigDecimal(rand(1..999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999))
+  splitting_potential_power = BigDecimal(rand(1..999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999))
+  position = BigDecimal(rand(1..99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999))
+  particles << NeutriParticle.new(mass, splitting_potential_power, position)
+end
+
+interaction = NeutriParticleInteraction.new(*particles)
+
+probability = ProbabilityOfInteraction.new(interaction).calculate
+p probability
