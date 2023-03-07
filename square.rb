@@ -87,3 +87,5 @@ loop do
 end
 
 
+# Q: how so I configure user and email in git?
+# A: git config --global user.name "Your Name"
