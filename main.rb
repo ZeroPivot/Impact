@@ -163,7 +163,7 @@ class NeutriParticleInteraction
 
   def initialize(*particles, distance: BigDecimal(1))
     @particles = particles
-    @distance = distance
+    @distance = distance 
   end
 
   def probability_of_interaction
